@@ -1,4 +1,4 @@
 python-binance
 pandas
-pandas_ta
 requests
+https://github.com/twopirllc/pandas-ta/archive/refs/heads/master.zip
