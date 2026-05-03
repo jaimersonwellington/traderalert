@@ -1,0 +1,28 @@
+name: Bot de Analise BTC
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Roda a cada 5 minutos
+  workflow_dispatch:      # Permite que você clique num botão para rodar agora
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar Bibliotecas
+        run: pip install -r requirements.txt
+
+      - name: Executar Bot
+        env:
+          BINANCE_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
