@@ -1,4 +1,4 @@
 python-binance
-pandas
+pandas<2.2.0
 requests
-https://github.com/twopirllc/pandas-ta/archive/development.tar.gz
+pandas_ta
