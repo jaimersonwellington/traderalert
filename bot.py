@@ -29,53 +29,53 @@ def enviar_telegram(mensagem):
         print(f"Erro ao enviar Telegram: {e}")
 
 # 2. Inicialização do Cliente Binance
-# Para apenas leitura de dados públicos, as chaves são opcionais, 
-# mas usamos aqui para permitir expansões futuras.
 client = Client(api_key, api_secret)
 
 try:
     print("Iniciando análise técnica...")
     
-    # 3. Obter dados (Últimas 100 velas de 5 minutos para uma análise rápida)
-    # Mudamos para 5m para combinar com a frequência do seu agendador
+    # 3. Obter dados (Últimas 100 velas de 5 minutos)
     klines = client.get_historical_klines("BTCUSDT", Client.KLINE_INTERVAL_5MINUTE, "12 hours ago UTC")
     
     if not klines:
         print("Erro: Não foi possível obter dados da Binance.")
         exit(1)
 
-    # 4. Organização dos dados em um DataFrame (Tabela)
+    # 4. Organização dos dados em um DataFrame
     df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
     
-    # Convertendo colunas para números (a API da Binance retorna strings)
+    # Convertendo colunas essenciais para números
     df['close'] = pd.to_numeric(df['close'])
     df['high'] = pd.to_numeric(df['high'])
     df['low'] = pd.to_numeric(df['low'])
 
-    # 5. Cálculo dos Indicadores Técnicos
-    # RSI (Índice de Força Relativa)
-    df['RSI'] = ta.rsi(df['close'], length=14)
+    # 5. Cálculo dos Indicadores Técnicos usando a extensão pandas_ta
+    # Calculando RSI (14)
+    df['RSI'] = df.ta.rsi(close='close', length=14)
     
-    # Médias Móveis Exponenciais (EMA) para identificar tendência
-    df['EMA_RAPIDA'] = ta.ema(df['close'], length=9)
-    df['EMA_LENTA'] = ta.ema(df['close'], length=21)
+    # Calculando Médias Móveis Exponenciais (EMA)
+    df['EMA_RAPIDA'] = df.ta.ema(close='close', length=9)
+    df['EMA_LENTA'] = df.ta.ema(close='close', length=21)
 
-    # Pegando os valores mais recentes
+    # Pegando os valores da última linha (candle atual/recente)
     ultimo_fechamento = df['close'].iloc[-1]
     ultimo_rsi = df['RSI'].iloc[-1]
     ema_r = df['EMA_RAPIDA'].iloc[-1]
     ema_l = df['EMA_LENTA'].iloc[-1]
 
-    # 6. Lógica de Interpretação (Price Action + Indicadores)
+    # 6. Lógica de Interpretação
     status = "🔍 *AGUARDANDO*"
     cor_emoji = "⚪"
 
+    # Se o RSI for menor que 30, está sobrevendido (oportunidade de compra)
     if ultimo_rsi < 30:
         status = "🚀 *OPORTUNIDADE: SOBREVENDIDO (COMPRA)*"
         cor_emoji = "🟢"
+    # Se o RSI for maior que 70, está sobrecomprado (risco de queda)
     elif ultimo_rsi > 70:
         status = "⚠️ *ATENÇÃO: SOBRECOMPRADO (VENDA)*"
         cor_emoji = "🔴"
+    # Cruzamento de Médias para tendência
     elif ema_r > ema_l:
         status = "📈 *TENDÊNCIA DE ALTA (BULLISH)*"
         cor_emoji = "🔹"
@@ -94,7 +94,7 @@ try:
     )
 
     enviar_telegram(mensagem_final)
-    print("Análise concluída com sucesso!")
+    print("Análise concluída e alerta enviado para o Telegram.")
 
 except Exception as e:
     erro_msg = f"❌ *Erro no Bot de Trading*:\n`{str(e)}`"
