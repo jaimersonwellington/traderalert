@@ -4,48 +4,99 @@ import pandas as pd
 import pandas_ta as ta
 from binance.client import Client
 
-# Configurações de Ambiente (Puxadas dos Secrets do GitHub)
+# 1. Configurações de Ambiente (Puxadas dos Secrets do GitHub via main.yml)
 api_key = os.getenv('BINANCE_KEY')
 api_secret = os.getenv('BINANCE_SECRET')
 token_telegram = os.getenv('TELEGRAM_TOKEN')
 chat_id = os.getenv('CHAT_ID')
 
 def enviar_telegram(mensagem):
+    """Função para enviar alertas para o Telegram"""
+    if not token_telegram or not chat_id:
+        print("Erro: TELEGRAM_TOKEN ou CHAT_ID não configurados.")
+        return
+    
     url = f"https://api.telegram.org/bot{token_telegram}/sendMessage"
-    payload = {"chat_id": chat_id, "text": mensagem, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
+    payload = {
+        "chat_id": chat_id, 
+        "text": mensagem, 
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Erro ao enviar Telegram: {e}")
 
-# 1. Conexão com a Binance
+# 2. Inicialização do Cliente Binance
+# Para apenas leitura de dados públicos, as chaves são opcionais, 
+# mas usamos aqui para permitir expansões futuras.
 client = Client(api_key, api_secret)
 
-# 2. Obter dados (Últimas 100 velas de 1 hora)
-klines = client.get_historical_klines("BTCUSDT", Client.KLINE_INTERVAL_1HOUR, "100 hours ago UTC")
-df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
-df['close'] = pd.to_numeric(df['close'])
+try:
+    print("Iniciando análise técnica...")
+    
+    # 3. Obter dados (Últimas 100 velas de 5 minutos para uma análise rápida)
+    # Mudamos para 5m para combinar com a frequência do seu agendador
+    klines = client.get_historical_klines("BTCUSDT", Client.KLINE_INTERVAL_5MINUTE, "12 hours ago UTC")
+    
+    if not klines:
+        print("Erro: Não foi possível obter dados da Binance.")
+        exit(1)
 
-# 3. Análise Técnica (RSI e Média Móvel de 20 períodos)
-df['RSI'] = ta.rsi(df['close'], length=14)
-df['EMA20'] = ta.ema(df['close'], length=20)
+    # 4. Organização dos dados em um DataFrame (Tabela)
+    df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
+    
+    # Convertendo colunas para números (a API da Binance retorna strings)
+    df['close'] = pd.to_numeric(df['close'])
+    df['high'] = pd.to_numeric(df['high'])
+    df['low'] = pd.to_numeric(df['low'])
 
-ultimo_fechamento = df['close'].iloc[-1]
-ultimo_rsi = df['RSI'].iloc[-1]
-ultima_ema = df['EMA20'].iloc[-1]
+    # 5. Cálculo dos Indicadores Técnicos
+    # RSI (Índice de Força Relativa)
+    df['RSI'] = ta.rsi(df['close'], length=14)
+    
+    # Médias Móveis Exponenciais (EMA) para identificar tendência
+    df['EMA_RAPIDA'] = ta.ema(df['close'], length=9)
+    df['EMA_LENTA'] = ta.ema(df['close'], length=21)
 
-# 4. Lógica de Alerta (Exemplo: RSI abaixo de 30 ou Preço acima da Média)
-status = "NEUTRO"
-if ultimo_rsi < 35:
-    status = "🚨 *SOBREVENDIDO (COMPRA)*"
-elif ultimo_rsi > 65:
-    status = "⚠️ *SOBRECOMPRADO (VENDA)*"
+    # Pegando os valores mais recentes
+    ultimo_fechamento = df['close'].iloc[-1]
+    ultimo_rsi = df['RSI'].iloc[-1]
+    ema_r = df['EMA_RAPIDA'].iloc[-1]
+    ema_l = df['EMA_LENTA'].iloc[-1]
 
-# Enviar alerta se houver algo relevante
-mensagem_alerta = (
-    f"📊 *Relatório BTC/USDT*\n\n"
-    f"💰 Preço: ${ultimo_fechamento:,.2f}\n"
-    f"📈 RSI: {ultimo_rsi:.2f}\n"
-    f"📉 EMA20: ${ultima_ema:,.2f}\n\n"
-    f"Sinal: {status}"
-)
+    # 6. Lógica de Interpretação (Price Action + Indicadores)
+    status = "🔍 *AGUARDANDO*"
+    cor_emoji = "⚪"
 
-enviar_telegram(mensagem_alerta)
-print("Análise executada e alerta enviado.")
+    if ultimo_rsi < 30:
+        status = "🚀 *OPORTUNIDADE: SOBREVENDIDO (COMPRA)*"
+        cor_emoji = "🟢"
+    elif ultimo_rsi > 70:
+        status = "⚠️ *ATENÇÃO: SOBRECOMPRADO (VENDA)*"
+        cor_emoji = "🔴"
+    elif ema_r > ema_l:
+        status = "📈 *TENDÊNCIA DE ALTA (BULLISH)*"
+        cor_emoji = "🔹"
+    else:
+        status = "📉 *TENDÊNCIA DE BAIXA (BEARISH)*"
+        cor_emoji = "🔸"
+
+    # 7. Montagem e envio da mensagem
+    mensagem_final = (
+        f"{cor_emoji} *RELATÓRIO BTC/USDT (5m)*\n\n"
+        f"💰 *Preço Atual:* `${ultimo_fechamento:,.2f}`\n"
+        f"📊 *RSI (14):* `{ultimo_rsi:.2f}`\n"
+        f"📉 *EMA (9/21):* `{ema_r:.2f}` / `{ema_l:.2f}`\n\n"
+        f"⚡ *Sinal:* {status}\n\n"
+        f"🕒 _Próxima verificação em 5 minutos._"
+    )
+
+    enviar_telegram(mensagem_final)
+    print("Análise concluída com sucesso!")
+
+except Exception as e:
+    erro_msg = f"❌ *Erro no Bot de Trading*:\n`{str(e)}`"
+    enviar_telegram(erro_msg)
+    print(f"Erro detectado: {e}")
