@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 
-# 1. Configurações de Ambiente
+# 1. Configurações
 token_telegram = os.getenv('TELEGRAM_TOKEN')
 chat_id = os.getenv('CHAT_ID')
 
@@ -12,8 +12,8 @@ def enviar_telegram(mensagem):
     payload = {"chat_id": chat_id, "text": mensagem, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Erro Telegram: {e}")
+    except:
+        pass
 
 def calcular_rsi(series, period=14):
     delta = series.diff()
@@ -23,39 +23,36 @@ def calcular_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 try:
-    print("Coletando dados da Binance via API pública...")
-    
-    # Usando o subdomínio api1, que costuma ignorar bloqueios de nuvem
+    # 2. Coleta de dados (Usando API pública para evitar bloqueio de região)
     url = "https://api1.binance.com/api/v3/klines"
     params = {"symbol": "BTCUSDT", "interval": "5m", "limit": "100"}
     
     response = requests.get(url, params=params, timeout=20)
-    response.raise_for_status()
     klines = response.json()
 
-    # 2. Processamento dos dados
+    # 3. Processamento
     df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
     df['close'] = pd.to_numeric(df['close'])
 
-    # 3. Cálculos
+    # 4. Indicadores
     df['RSI'] = calcular_rsi(df['close'])
-    ultimo_fechamento = df['close'].iloc[-1]
+    ultimo_p = df['close'].iloc[-1]
     ultimo_rsi = df['RSI'].iloc[-1]
 
-    # 4. Lógica de Sinal
+    # 5. Mensagem
     status = "🔍 *NEUTRO*"
-    if ultimo_rsi < 30: status = "🚀 *SOBREVENDIDO (COMPRA)*"
-    elif ultimo_rsi > 70: status = "⚠️ *SOBRECOMPRADO (VENDA)*"
+    if ultimo_rsi < 30: status = "🟢 *COMPRA (SOBREVENDIDO)*"
+    elif ultimo_rsi > 70: status = "🔴 *VENDA (SOBRECOMPRADO)*"
 
     mensagem = (
-        f"📊 *BOT ESTRATÉGICO BTC*\n\n"
-        f"💰 *Preço:* `${ultimo_fechamento:,.2f}`\n"
+        f"🤖 *BOT TRADER ALERT*\n\n"
+        f"💰 *BTC:* `${ultimo_p:,.2f}`\n"
         f"📈 *RSI:* `{ultimo_rsi:.2f}`\n"
         f"⚡ *Sinal:* {status}"
     )
 
     enviar_telegram(mensagem)
-    print("Sucesso! Relatório enviado.")
+    print("Sucesso! Alerta enviado.")
 
 except Exception as e:
-    print(f"Erro crítico: {e}")
+    print(f"Erro: {e}")
