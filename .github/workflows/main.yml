@@ -1,20 +1,29 @@
 name: Bot de Analise BTC
+
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+
+env:
+  # Esta linha remove o aviso de depreciação do Node.js 20
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
+        
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          
       - name: Instalar Dependências
         run: pip install -r requirements.txt
+        
       - name: Executar Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
