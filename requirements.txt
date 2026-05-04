@@ -1,4 +1,3 @@
 python-binance
-pandas<2.2.0
+pandas
 requests
-pandas-ta
