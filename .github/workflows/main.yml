@@ -1,29 +1,20 @@
 name: Bot de Analise BTC
-
 on:
   schedule:
-    - cron: '*/5 * * * *' 
-  workflow_dispatch:      
-
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
-
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Instalar Dependências
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          # Força a instalação ignorando cache para evitar erros de versão
-          pip install --no-cache-dir -r requirements.txt
-
+        run: pip install -r requirements.txt
       - name: Executar Bot
         env:
           BINANCE_KEY: ${{ secrets.BINANCE_API_KEY }}
