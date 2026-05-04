@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 import numpy as np
 
-# 1. Configurações e Funções Base
+# 1. Configurações de Ambiente
 token_telegram = os.getenv('TELEGRAM_TOKEN')
 chat_id = os.getenv('CHAT_ID')
 
@@ -14,8 +14,12 @@ def enviar_telegram(mensagem):
     try: requests.post(url, json=payload, timeout=10)
     except: pass
 
-def obter_dados(symbol, interval, limit=200):
-    endpoints = ["https://api.binance.us/api/v3/klines", "https://data-api.binance.vision/api/v3/klines"]
+def obter_dados(symbol, interval, limit=300):
+    endpoints = [
+        "https://api.binance.us/api/v3/klines",
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://api1.binance.com/api/v3/klines"
+    ]
     for url in endpoints:
         try:
             params = {"symbol": symbol, "interval": interval, "limit": limit}
@@ -31,79 +35,90 @@ def calcular_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    return 100 - (100 / (1 + (gain / loss)))
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 try:
-    print("🚀 Analisando Confluência 5min/60min...")
-    df_5m = obter_dados("BTCUSDT", "5m", 300)   # Precisamos de 200+ para a EMA 200
+    print("🚀 Iniciando Análise de Confluência Avançada...")
+    
+    # Coleta de dados (300 candles para garantir médias longas)
+    df_5m = obter_dados("BTCUSDT", "5m", 300)
     df_60m = obter_dados("BTCUSDT", "1h", 100)
 
-    # --- PROCESSAMENTO 60 MINUTOS (MACRO) ---
+    if df_5m is None or df_60m is None:
+        raise Exception("Erro ao obter dados da API.")
+
+    # --- INDICADORES 60 MINUTOS (MACRO) ---
+    # Topos e Fundos (Usando os últimos 20 candles de 1h como referência de região)
+    resistencia_60m = df_60m['high'].rolling(window=20).max().iloc[-1]
+    suporte_60m = df_60m['low'].rolling(window=20).min().iloc[-1]
     ma20_60m = df_60m['close'].rolling(window=20).mean().iloc[-1]
-    topo_60m = df_60m['high'].max()  # Resistência máxima recente
-    fundo_60m = df_60m['low'].min()  # Suporte máximo recente
-    preco_60m = df_60m['close'].iloc[-1]
+    tendencia_alta_60m = df_60m['close'].iloc[-1] > ma20_60m
 
-    # --- PROCESSAMENTO 5 MINUTOS (EXECUÇÃO) ---
+    # --- INDICADORES 5 MINUTOS (EXECUÇÃO) ---
     # Médias Móveis
-    ema9_5m = df_5m['close'].ewm(span=9, adjust=False).mean()
-    ema21_5m = df_5m['close'].ewm(span=21, adjust=False).mean()
-    ma200_5m = df_5m['close'].rolling(window=200).mean()
+    ema9 = df_5m['close'].ewm(span=9, adjust=False).mean()
+    ema21 = df_5m['close'].ewm(span=21, adjust=False).mean()
+    ma200 = df_5m['close'].rolling(window=200).mean()
     
-    # Volume e RSI
-    vol_media = df_5m['vol'].rolling(window=20).mean().iloc[-1]
-    vol_atual = df_5m['vol'].iloc[-1]
-    rsi_5m = calcular_rsi(df_5m['close']).iloc[-1]
+    # RSI e Volume
+    rsi = calcular_rsi(df_5m['close'])
+    vol_media = df_5m['vol'].rolling(window=20).mean()
     
-    # Valores atuais para lógica
-    p_atual = df_5m['close'].iloc[-1]
-    p_low = df_5m['low'].iloc[-1]
-    p_high = df_5m['high'].iloc[-1]
-    m200 = ma200_5m.iloc[-1]
+    # Valores atuais para lógica de gatilho
+    c = df_5m['close'].iloc[-1]
+    l = df_5m['low'].iloc[-1]
+    h = df_5m['high'].iloc[-1]
+    v = df_5m['vol'].iloc[-1]
+    m200_atual = ma200.iloc[-1]
     
-    # 1. Verificação de Toque na Média 200 (5min)
-    # Definimos toque se o preço 'low' for menor que a média e o 'close' for maior (ou vice-versa)
-    toucou_m200_compra = p_low <= m200 <= p_high and p_atual >= m200
-    toucou_m200_venda = p_low <= m200 <= p_high and p_atual <= m200
+    # --- LÓGICA DE CONFLUÊNCIA ---
 
-    # 2. Cruzamento de Médias 9/21 (5min)
-    cruzou_alta = ema9_5m.iloc[-1] > ema21_5m.iloc[-1] and ema9_5m.iloc[-2] <= ema21_5m.iloc[-2]
-    cruzou_baixa = ema9_5m.iloc[-1] < ema21_5m.iloc[-1] and ema9_5m.iloc[-2] >= ema21_5m.iloc[-2]
-
-    # 3. Lógica de Volume (Confirmar se há força)
-    volume_confirmado = vol_atual > vol_media
-
-    # --- CONDIÇÕES DE ALERTA ---
+    # 1. Verificação de Proximidade/Toque na MA200 (Margem de 0.05% para garantir detecção)
+    perto_m200 = abs(c - m200_atual) / m200_atual < 0.0005
+    toca_m200 = l <= m200_atual <= h
     
-    # ALERTA DE COMPRA:
-    # Preço tocou a MA200 (5m) + Perto do Fundo (60m) + Cruzamento 9/21 + Volume
-    if (toucou_m200_compra or p_atual > m200) and cruzou_alta and volume_confirmado:
+    # 2. Cruzamento de Médias 9/21 (Detecta a virada no candle atual ou anterior)
+    cruzamento_alta = (ema9.iloc[-1] > ema21.iloc[-1]) and (ema9.iloc[-2] <= ema21.iloc[-2])
+    cruzamento_baixa = (ema9.iloc[-1] < ema21.iloc[-1]) and (ema9.iloc[-2] >= ema21.iloc[-2])
+
+    # 3. Filtro de Volume (Volume acima da média)
+    volume_ok = v > vol_media.iloc[-1]
+
+    # --- DISPARO DE ALERTAS ---
+
+    # CONDIÇÃO COMPRA: 
+    # Toque/Perto da MA200 (5m) + Cruzamento 9/21 (5m) + Acima do Suporte (60m) + Tendência 60m Alta + Volume
+    if (toca_m200 or perto_m200) and cruzamento_alta and v > suporte_60m and tendencia_alta_60m and volume_ok:
         msg = (
-            f"🟢 **SINAL DE COMPRA CONFIRMADO** 🟢\n"
-            f"🎯 *Ação:* Entrar na abertura do próximo candle\n\n"
-            f"💰 Preço: `${p_atual:,.2f}`\n"
-            f"📏 MA200(5m): `${m200:,.2f}`\n"
-            f"📊 RSI: `{rsi_5m:.2f}`\n"
-            f"🏗️ Macro(60m): Preço acima do Fundo `{fundo_60m:,.2f}`\n"
-            f"🔥 Volume: `{(vol_atual/vol_media):.1f}x` acima da média"
+            "✅ **SINAL DE COMPRA: CONFLUÊNCIA TOTAL** 🚀\n"
+            "🎯 *Entrada:* Abertura do próximo candle\n\n"
+            f"💰 Preço Atual: `${c:,.2f}`\n"
+            f"📏 MA200 (5m): `${m200_atual:,.2f}`\n"
+            f"📊 RSI (5m): `{rsi.iloc[-1]:.2f}`\n"
+            f"🏗️ Macro (60m): Acima da MA20 e Suporte\n"
+            f"🔥 Volume: Confirmado (Acima da média)"
         )
         enviar_telegram(msg)
+        print("Sinal de Compra enviado!")
 
-    # ALERTA DE VENDA:
-    # Preço tocou a MA200 (5m) + Perto do Topo (60m) + Cruzamento 9/21 + Volume
-    elif (toucou_m200_venda or p_atual < m200) and cruzou_baixa and volume_confirmado:
+    # CONDIÇÃO VENDA:
+    # Toque/Perto da MA200 (5m) + Cruzamento 9/21 (5m) + Abaixo da Resistência (60m) + Tendência 60m Baixa + Volume
+    elif (toca_m200 or perto_m200) and cruzamento_baixa and v < resistencia_60m and not tendencia_alta_60m and volume_ok:
         msg = (
-            f"🔴 **SINAL DE VENDA CONFIRMADO** 🔴\n"
-            f"🎯 *Ação:* Entrar na abertura do próximo candle\n\n"
-            f"💰 Preço: `${p_atual:,.2f}`\n"
-            f"📏 MA200(5m): `${m200:,.2f}`\n"
-            f"📊 RSI: `{rsi_5m:.2f}`\n"
-            f"🏗️ Macro(60m): Preço abaixo do Topo `{topo_60m:,.2f}`\n"
-            f"🔥 Volume: `{(vol_atual/vol_media):.1f}x` acima da média"
+            "🔴 **SINAL DE VENDA: CONFLUÊNCIA TOTAL** 🔴\n"
+            "🎯 *Entrada:* Abertura do próximo candle\n\n"
+            f"💰 Preço Atual: `${c:,.2f}`\n"
+            f"📏 MA200 (5m): `${m200_atual:,.2f}`\n"
+            f"📊 RSI (5m): `{rsi.iloc[-1]:.2f}`\n"
+            f"🏗️ Macro (60m): Abaixo da MA20 e Resistência\n"
+            f"🔥 Volume: Confirmado (Acima da média)"
         )
         enviar_telegram(msg)
+        print("Sinal de Venda enviado!")
 
-    print(f"Check concluído. RSI: {rsi_5m:.2f} | P: {p_atual}")
+    else:
+        print(f"Monitorando... P:{c:.2f} | MA200:{m200_atual:.2f} | RSI:{rsi.iloc[-1]:.2f}")
 
 except Exception as e:
-    print(f"Erro: {e}")
+    print(f"❌ Erro na execução: {e}")
